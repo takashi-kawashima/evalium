@@ -15,9 +15,9 @@ def build_index_cmd(args):
 
 def rank_cmd(args):
     results = rank_query(args.index, args.dataset, top_k=args.top_k)
-    for r in results:
-        print(f"score={r['score']:.4f}\tfolder={r['meta']['folder']}\trating={r['meta']['rating']}\n{r['meta']['response']}\n---")
-
+    print("Ranking results:")
+    for i, res in enumerate(results): 
+        print(f"Rank {i+1}: id={res[1].id} , score={res[0]:.4f} , text={res[1].outputs.get('agent_response')}")
 
 def main():
     parser = argparse.ArgumentParser(description="Evalium CLI")

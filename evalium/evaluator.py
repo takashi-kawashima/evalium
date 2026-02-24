@@ -134,10 +134,10 @@ def fill_embeddings_if_missing(smith: LangSmithIntegration, dataset_name: str, c
     for example in examples:
         resp_text = example.outputs.get("agent_response")
         if resp_text.startswith("ERROR:"):
-            print("Error response, skipping embedding")
+            # print("Error response, skipping embedding")
             continue
         if example.outputs.get("embedding"):
-            print("already has embedding, using existing one")
+            # print("already has embedding, using existing one")
             continue
         if not resp_text:
             continue
@@ -151,7 +151,7 @@ def build_reference_embeddings(data_dir: str, out_path: str, rating_threshold: f
     folders = find_data_folders(data_dir)
     folder_basename = os.path.basename(data_dir)
     smith = LangSmithIntegration()
-
+    new_examples = []
     for folder in folders:
         dataset_basename = os.path.basename(folder)
         input_json = load_input_json(folder)
@@ -179,17 +179,18 @@ def build_reference_embeddings(data_dir: str, out_path: str, rating_threshold: f
             )
         except Exception as e:
             print("Error saving/sending metadata:", e)
-        new_examples = []
+
         all_emb = []
         fill_embeddings_if_missing(smith=smith, dataset_name=dataset_name, client=client)
-        examples = smith.list_examples(dataset_name=dataset_name)
-        for example in examples:
+        for example in smith.list_examples(dataset_name=dataset_name):
             print(f"LangSmith dataset: {example.inputs['user_message']} (id: {example.id})")
             if example.outputs.get("embedding"):
-                print("already has embedding, using existing one")
+                # print("already has embedding, using existing one")
                 emb = example.outputs["embedding"]
             # check if rating is above threshold (if rating exists and assume_all is False)
             rating = example.outputs.get(rating_col)
+            if rating_col is None:
+                all_emb.append(emb)
             if rating is not None and rating > rating_threshold:
                 all_emb.append(emb)
         
@@ -203,7 +204,6 @@ def build_reference_embeddings(data_dir: str, out_path: str, rating_threshold: f
                 "outputs": {"embedding": all_emb},
                 "metadata": {"user_message": input_json['user_message'],"config_name": input_json['config_name'],"shop_id": input_json['shop_id'],"prompt_date": input_json['prompt_date'] },
             })
-        break
 
     new_dataset = smith.client.create_dataset(
         dataset_name=f"Indexed_dataset_{folder_basename}",
@@ -214,9 +214,6 @@ def build_reference_embeddings(data_dir: str, out_path: str, rating_threshold: f
         examples=new_examples
         )
     return new_dataset
-
-# def rank_query(dataset_name:str, query:str, top_k:int=5):
-
 
 def load_index(path: str) -> Dict[str, Any]:
     data = np.load(path, allow_pickle=True)

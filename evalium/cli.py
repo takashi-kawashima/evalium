@@ -10,12 +10,11 @@ from evaluator import build_reference_embeddings, rank_query
 
 
 def build_index_cmd(args):
-    res = build_reference_embeddings(args.data_dir, args.out, rating_threshold=args.threshold)
-    print(json.dumps(res, ensure_ascii=False))
-
+    dataset = build_reference_embeddings(args.data_dir, args.out, rating_threshold=args.threshold)
+    print(f"Index built, dataset id: {dataset.id}")
 
 def rank_cmd(args):
-    results = rank_query(args.embeddings, args.query, top_k=args.top_k)
+    results = rank_query(args.index, args.dataset, top_k=args.top_k)
     for r in results:
         print(f"score={r['score']:.4f}\tfolder={r['meta']['folder']}\trating={r['meta']['rating']}\n{r['meta']['response']}\n---")
 
@@ -31,8 +30,8 @@ def main():
     p_build.add_argument("--assume-all", action="store_true", help="Treat all rows as reference responses (no rating required)")
 
     p_rank = sub.add_parser("rank")
-    p_rank.add_argument("--embeddings", required=True)
-    p_rank.add_argument("--query", required=True)
+    p_rank.add_argument("--index", required=True)
+    p_rank.add_argument("--dataset", required=True)
     p_rank.add_argument("--top-k", type=int, default=5)
 
     args = parser.parse_args()

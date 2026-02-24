@@ -9,6 +9,7 @@ import pandas as pd
 import openai
 from datetime import datetime, timezone
 from langsmith_integration import LangSmithIntegration
+from sklearn.metrics.pairwise import cosine_similarity
 # Load local.env if present
 load_dotenv("local.env")
 
@@ -128,12 +129,31 @@ def find_excel_file(folder: str) -> Optional[str]:
 def load_ratings_from_excel(path: str) -> pd.DataFrame:
     return pd.read_excel(path)
 
+def fill_embeddings_if_missing(smith: LangSmithIntegration, dataset_name: str, client: EmbeddingClient):
+    examples = smith.list_examples(dataset_name=dataset_name)
+    for example in examples:
+        resp_text = example.outputs.get("agent_response")
+        if resp_text.startswith("ERROR:"):
+            print("Error response, skipping embedding")
+            continue
+        if example.outputs.get("embedding"):
+            print("already has embedding, using existing one")
+            continue
+        if not resp_text:
+            continue
+        emb = client.embed_texts([resp_text])[0]
+        outputs = example.outputs
+        outputs["embedding"] = emb
+        smith.update_example(example_id=example.id, outputs=outputs)
+
 def build_reference_embeddings(data_dir: str, out_path: str, rating_threshold: float = 4.0, assume_all: bool = False):
     client = EmbeddingClient()
     folders = find_data_folders(data_dir)
+    folder_basename = os.path.basename(data_dir)
     smith = LangSmithIntegration()
 
     for folder in folders:
+        dataset_basename = os.path.basename(folder)
         input_json = load_input_json(folder)
         excel = find_excel_file(folder)
         if not excel:
@@ -148,75 +168,54 @@ def build_reference_embeddings(data_dir: str, out_path: str, rating_threshold: f
         df['shop_id'] = input_json['shop_id']
         df['prompt_date'] = input_json['prompt_date']
         df['user_message'] = input_json['user_message']
-        dataset_name=f"{input_json['config_name']}_shop{input_json['shop_id']}_{input_json['prompt_date']}"
+        dataset_name=f"{dataset_basename}"
         try:
             smith.create_dataset(
                 dataset_name=dataset_name,
                 description=f"Dataset for folder {folder} with input and responses",
                 df=df,
                 input_keys=["user_message","run_index","config_name","shop_id","prompt_date"],
-                output_keys=[text_col,"follow_up_questions","tools_and_arguments","iteration_count","time_seconds","total_tokens","prompt_tokens","completion_tokens"]
+                output_keys=[text_col,"follow_up_questions","tools_and_arguments","iteration_count","time_seconds","total_tokens","prompt_tokens","completion_tokens",rating_col]
             )
         except Exception as e:
             print("Error saving/sending metadata:", e)
-    
+        new_examples = []
+        all_emb = []
+        fill_embeddings_if_missing(smith=smith, dataset_name=dataset_name, client=client)
         examples = smith.list_examples(dataset_name=dataset_name)
         for example in examples:
             print(f"LangSmith dataset: {example.inputs['user_message']} (id: {example.id})")
             if example.outputs.get("embedding"):
-                print("already has embedding, skipping")
-                continue
-            resp_text = example.outputs[text_col]
-            emb = client.embed_texts([resp_text])[0]
-            outputs = example.outputs
-            outputs["embedding"] = emb
-            smith.update_example(example_id=example.id, outputs=outputs)
+                print("already has embedding, using existing one")
+                emb = example.outputs["embedding"]
+            # check if rating is above threshold (if rating exists and assume_all is False)
+            rating = example.outputs.get(rating_col)
+            if rating is not None and rating > rating_threshold:
+                all_emb.append(emb)
+        
+        if all_emb:
+            all_emb = np.array(all_emb, dtype=np.float32)
+            # modify all_emb is average vector of collection of all_emb, and normalize to unit vector below:
+            all_emb = np.mean(all_emb, axis=0, keepdims=False)
 
-        # for _, row in df.iterrows():
-        #     resp_text = str(row[text_col])
-        #     if rating_col is None or assume_all:
-        #         # include all responses when no rating column or assume_all flag set
-        #         emb = client.embed_texts([resp_text])[0]
-        #         all_embeddings.append(emb)
-        #         all_meta.append({"folder": os.path.basename(folder), "response": resp_text, "rating": None, "input": input_json})
-        #     else:
-        #         try:
-        #             rating = float(row[rating_col])
-        #         except Exception:
-        #             continue
-        #         if rating >= rating_threshold:
-        #             emb = client.embed_texts([resp_text])[0]
-        #             all_embeddings.append(emb)
-        #             all_meta.append({"folder": os.path.basename(folder), "response": resp_text, "rating": rating, "input": input_json})
+            new_examples.append({
+                "inputs": {"user_message": input_json['user_message'] },
+                "outputs": {"embedding": all_emb},
+                "metadata": {"user_message": input_json['user_message'],"config_name": input_json['config_name'],"shop_id": input_json['shop_id'],"prompt_date": input_json['prompt_date'] },
+            })
         break
 
-    # if all_embeddings:
-    #     X = np.stack(all_embeddings)
-    # else:
-    #     X = np.zeros((0, 1), dtype=np.float32)
+    new_dataset = smith.client.create_dataset(
+        dataset_name=f"Indexed_dataset_{folder_basename}",
+        description="Indexed dataset trained by goldern dataset",
+    )
+    smith.client.create_examples(
+        dataset_id=new_dataset.id,
+        examples=new_examples
+        )
+    return new_dataset
 
-    # # persist embeddings + meta
-    # np.savez(out_path, embeddings=X, meta=all_meta)
-
-    # # write metadata summary and try send to LangSmith
-    # try:
-    #     meta = {
-    #         "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-    #         "data_dir": data_dir,
-    #         "n_refs": len(all_meta),
-    #         "out": out_path,
-    #         "rating_threshold": rating_threshold,
-    #         "assume_all": bool(assume_all),
-    #         "model": client.model,
-    #     }
-    #     meta_path = smith.save_metadata(meta, os.path.join(os.path.dirname(out_path) or ".", "artifacts"))
-    #     _sent = smith.try_send_to_langsmith(meta, X, out_path)
-    #     meta["langsmith_sent"] = bool(_sent)
-    # except Exception as e:
-    #     print("Error saving/sending metadata:", e)
-    #     meta = {"n_refs": len(all_meta), "out": out_path}
-
-    return 
+# def rank_query(dataset_name:str, query:str, top_k:int=5):
 
 
 def load_index(path: str) -> Dict[str, Any]:
@@ -225,21 +224,51 @@ def load_index(path: str) -> Dict[str, Any]:
     return {"embeddings": data["embeddings"], "meta": data["meta"]}
 
 
-def rank_query(embeddings_path: str, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-    idx = load_index(embeddings_path)
-    refs = idx["embeddings"]
-    meta = list(idx["meta"])
-    if refs.size == 0:
-        return []
-
+def rank_query(index: str, dataset: str, top_k: int = 5) -> List[Dict[str, Any]]:
     client = EmbeddingClient()
-    q_emb = client.embed_texts([query])[0]
+    smith = LangSmithIntegration()
+    
+    fill_embeddings_if_missing(smith=smith, dataset_name=dataset, client=client)
 
-    from sklearn.metrics.pairwise import cosine_similarity
+    first_ex = next(smith.client.list_examples(dataset_name=dataset))
+    user_message = first_ex.inputs.get("user_message")
+    index_ex = next(smith.client.list_examples(dataset_name=index, metadata={"user_message": user_message}))
+    index_emb = np.array(index_ex.outputs.get("embedding")).reshape(1, -1)
 
-    sims = cosine_similarity(refs, q_emb.reshape(1, -1)).reshape(-1)
-    order = np.argsort(-sims)[:top_k]
-    results = []
-    for i in order:
-        results.append({"score": float(sims[i]), "meta": meta[i]})
-    return results
+    for example in smith.client.list_examples(dataset_name=dataset):
+        user_message = example.inputs.get("user_message")
+        if example.outputs.get("embedding"):
+            q_emb = example.outputs["embedding"]
+            q_emb = np.array(q_emb).reshape(1, -1)
+        else:
+            continue
+        sims = cosine_similarity(index_emb, q_emb)
+        outputs = example.outputs
+        outputs["similarity"] = sims.flatten()[0]
+        smith.update_example(example_id=example.id, outputs=outputs)
+
+    list_sims = []
+    for example in smith.client.list_examples(dataset_name=dataset):
+        sim = example.outputs.get("similarity")
+        if sim is not None and isinstance(sim, (float, int)):
+            list_sims.append((sim, example))
+
+    ranking = sorted(list_sims, key=lambda x: x[0], reverse=True)
+    return ranking[:top_k]
+
+    # refs = idx["embeddings"]
+    # meta = list(idx["meta"])
+    # if refs.size == 0:
+    #     return []
+
+    # client = EmbeddingClient()
+    # q_emb = client.embed_texts([query])[0]
+
+    # from sklearn.metrics.pairwise import cosine_similarity
+
+    # sims = cosine_similarity(refs, q_emb.reshape(1, -1)).reshape(-1)
+    # order = np.argsort(-sims)[:top_k]
+    # results = []
+    # for i in order:
+    #     results.append({"score": float(sims[i]), "meta": meta[i]})
+    # return results

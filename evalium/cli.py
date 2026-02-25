@@ -6,12 +6,13 @@ from dotenv import load_dotenv
 # load local.env for CLI use
 load_dotenv("local.env")
 
-from evaluator import build_reference_embeddings, rank_query
+from evaluator import build_index, rank_query
 
 
 def build_index_cmd(args):
-    dataset = build_reference_embeddings(args.data_dir, rating_threshold=args.threshold)
-    print(f"Index built, dataset id: {dataset.id}")
+    dataset = build_index(args.data_dir, rating_threshold=args.threshold)
+
+    print(f"Index built, dataset id: {dataset.name}")
 
 def rank_cmd(args):
     results = rank_query(args.index, args.dataset, top_k=args.top_k)

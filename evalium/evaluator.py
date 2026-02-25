@@ -10,6 +10,8 @@ import openai
 from datetime import datetime, timezone
 from langsmith_integration import LangSmithIntegration
 from sklearn.metrics.pairwise import cosine_similarity
+from dataset import Dataset, Example
+
 # Load local.env if present
 load_dotenv("local.env")
 
@@ -115,109 +117,67 @@ def find_data_folders(root: str) -> List[str]:
             folders.append(path)
     return folders
 
+def add_embeddings(dataset: Dataset, client: EmbeddingClient, rating_threshold: float):
 
-def load_input_json(folder: str) -> dict:
-    p = os.path.join(folder, "input.json")
-    with open(p, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data
-
-def find_excel_file(folder: str) -> Optional[str]:
-    files = glob.glob(os.path.join(folder, "*.xlsx"))
-    return files[0] if files else None
-
-def load_ratings_from_excel(path: str) -> pd.DataFrame:
-    return pd.read_excel(path)
-
-def fill_embeddings_if_missing(smith: LangSmithIntegration, dataset_name: str, client: EmbeddingClient):
-    examples = smith.list_examples(dataset_name=dataset_name)
-    for example in examples:
-        resp_text = example.outputs.get("agent_response")
-        if resp_text.startswith("ERROR:"):
-            # print("Error response, skipping embedding")
+    for i, example in dataset.df.iterrows():
+        if dataset.embeddings.get(i) is not None:
+            emb = dataset.embeddings[i]
+            print("already has embedding, using existing one")
             continue
-        if example.outputs.get("embedding"):
-            # print("already has embedding, using existing one")
-            continue
+        resp_text = example["agent_response"]
         if not resp_text:
             continue
+        if resp_text.startswith("ERROR:"):
+            print("Error response, skipping embedding")
+            continue
+        if (example['rating'] is None) or (np.isnan(example['rating'])) or (example['rating'] <= rating_threshold):
+            continue
+        # retrieve embeddings
         emb = client.embed_texts([resp_text])[0]
-        outputs = example.outputs
-        outputs["embedding"] = emb
-        smith.update_example(example_id=example.id, outputs=outputs)
+#         enc = json.dumps(emb.tolist())
+        dataset.embeddings[i] = emb
 
-def build_reference_embeddings(data_dir: str, rating_threshold: float = 4.0):
+def fetch_dataset_embeddings(dataset: Dataset):
+    embeddings = []
+    for i, example in dataset.df.iterrows():
+        if dataset.embeddings.get(i) is not None:
+            emb = dataset.embeddings[i]
+            embeddings.append(emb)
+    embeddings = np.array(embeddings, dtype=np.float32)
+    # modify all_emb is average vector of collection of all_emb, and normalize to unit vector below:
+    if len(embeddings) > 0:
+        ave_embeddings = np.mean(embeddings, axis=0, keepdims=False)
+    else:
+        ave_embeddings = None # Assuming embedding size of 384; adjust as needed
+    return embeddings, ave_embeddings
+
+def build_index(data_dir: str, rating_threshold: float = 4.0):
     client = EmbeddingClient()
     folders = find_data_folders(data_dir)
     folder_basename = os.path.basename(data_dir)
     smith = LangSmithIntegration()
-    new_examples = []
+    index_df = pd.DataFrame()
+    # create examples as intermediate data
+    examples = []
     for folder in folders:
-        dataset_basename = os.path.basename(folder)
-        input_json = load_input_json(folder)
-        excel = find_excel_file(folder)
-        if not excel:
-            continue
-        df = load_ratings_from_excel(excel)
-        # detect likely columns
-        text_col = "agent_response"
-        rating_col = "rating"
-        if rating_col not in df.columns:
-            rating_col = None 
-        df['config_name'] = input_json['config_name']
-        df['shop_id'] = input_json['shop_id']
-        df['prompt_date'] = input_json['prompt_date']
-        df['user_message'] = input_json['user_message']
-        dataset_name=f"{dataset_basename}"
-        try:
-            smith.create_dataset(
-                dataset_name=dataset_name,
-                description=f"Dataset for folder {folder} with input and responses",
-                df=df,
-                input_keys=["user_message","run_index","config_name","shop_id","prompt_date"],
-                output_keys=[text_col,"follow_up_questions","tools_and_arguments","iteration_count","time_seconds","total_tokens","prompt_tokens","completion_tokens",rating_col]
-            )
-        except Exception as e:
-            print("Error saving/sending metadata:", e)
+        dataset = Dataset.from_folder(folder)
+        add_embeddings(dataset=dataset, client=client, rating_threshold=rating_threshold)
+        dataset.save(os.path.join(folder, "dataset_with_emb.xlsx"))
+        dataset_embeddings, ave_embeddings = fetch_dataset_embeddings(dataset=dataset)
+        examples.append({
+            "inputs": {"user_message": dataset.metadata['user_message']},
+            "outputs": {"embedding": ave_embeddings},
+            "metadata": dataset.metadata
+        })
+    index_dataset_name = f"Indexed_dataset_{folder_basename}"
+    index_dataset = Dataset.from_examples(examples=examples, dataset_name=index_dataset_name)
+    if smith is not None:
+        smith_dataset = smith.create_dataset_from_dummy(dataset=index_dataset)
 
-        all_emb = []
-        fill_embeddings_if_missing(smith=smith, dataset_name=dataset_name, client=client)
-        for example in smith.list_examples(dataset_name=dataset_name):
-            print(f"LangSmith dataset: {example.inputs['user_message']} (id: {example.id})")
-            if example.outputs.get("embedding"):
-                # print("already has embedding, using existing one")
-                emb = example.outputs["embedding"]
-            # check if rating is above threshold (if rating exists and assume_all is False)
-            rating = example.outputs.get(rating_col)
-            if rating_col is None:
-                all_emb.append(emb)
-            if rating is not None and rating > rating_threshold:
-                all_emb.append(emb)
-        
-        if all_emb:
-            all_emb = np.array(all_emb, dtype=np.float32)
-            # modify all_emb is average vector of collection of all_emb, and normalize to unit vector below:
-            all_emb = np.mean(all_emb, axis=0, keepdims=False)
-
-            new_examples.append({
-                "inputs": {"user_message": input_json['user_message'] },
-                "outputs": {"embedding": all_emb},
-                "metadata": {"user_message": input_json['user_message'],"config_name": input_json['config_name'],"shop_id": input_json['shop_id'],"prompt_date": input_json['prompt_date'] },
-            })
-
-    new_dataset = smith.client.create_dataset(
-        dataset_name=f"Indexed_dataset_{folder_basename}",
-        description="Indexed dataset trained by goldern dataset",
-    )
-    smith.client.create_examples(
-        dataset_id=new_dataset.id,
-        examples=new_examples
-        )
-    return new_dataset
+    return index_dataset
 
 def load_index(path: str) -> Dict[str, Any]:
     data = np.load(path, allow_pickle=True)
-    
     return {"embeddings": data["embeddings"], "meta": data["meta"]}
 
 

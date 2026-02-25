@@ -146,7 +146,7 @@ def fill_embeddings_if_missing(smith: LangSmithIntegration, dataset_name: str, c
         outputs["embedding"] = emb
         smith.update_example(example_id=example.id, outputs=outputs)
 
-def build_reference_embeddings(data_dir: str, out_path: str, rating_threshold: float = 4.0, assume_all: bool = False):
+def build_reference_embeddings(data_dir: str, rating_threshold: float = 4.0):
     client = EmbeddingClient()
     folders = find_data_folders(data_dir)
     folder_basename = os.path.basename(data_dir)

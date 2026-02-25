@@ -10,7 +10,7 @@ from evaluator import build_reference_embeddings, rank_query
 
 
 def build_index_cmd(args):
-    dataset = build_reference_embeddings(args.data_dir, args.out, rating_threshold=args.threshold)
+    dataset = build_reference_embeddings(args.data_dir, rating_threshold=args.threshold)
     print(f"Index built, dataset id: {dataset.id}")
 
 def rank_cmd(args):
@@ -25,9 +25,7 @@ def main():
 
     p_build = sub.add_parser("build-index")
     p_build.add_argument("--data-dir", required=True)
-    p_build.add_argument("--out", required=True)
     p_build.add_argument("--threshold", type=float, default=4.0)
-    p_build.add_argument("--assume-all", action="store_true", help="Treat all rows as reference responses (no rating required)")
 
     p_rank = sub.add_parser("rank")
     p_rank.add_argument("--index", required=True)

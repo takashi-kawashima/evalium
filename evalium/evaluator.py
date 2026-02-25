@@ -118,7 +118,7 @@ def find_data_folders(root: str) -> List[str]:
     return folders
 
 def add_embeddings(dataset: Dataset, client: EmbeddingClient, rating_threshold: float):
-
+    # for each example, if rating is above threshold, add embedding of agent_response to dataset.embeddings
     for i, example in dataset.df.iterrows():
         if dataset.embeddings.get(i) is not None:
             emb = dataset.embeddings[i]
@@ -137,33 +137,21 @@ def add_embeddings(dataset: Dataset, client: EmbeddingClient, rating_threshold: 
 #         enc = json.dumps(emb.tolist())
         dataset.embeddings[i] = emb
 
-def fetch_dataset_embeddings(dataset: Dataset):
-    embeddings = []
-    for i, example in dataset.df.iterrows():
-        if dataset.embeddings.get(i) is not None:
-            emb = dataset.embeddings[i]
-            embeddings.append(emb)
-    embeddings = np.array(embeddings, dtype=np.float32)
-    # modify all_emb is average vector of collection of all_emb, and normalize to unit vector below:
-    if len(embeddings) > 0:
-        ave_embeddings = np.mean(embeddings, axis=0, keepdims=False)
-    else:
-        ave_embeddings = None # Assuming embedding size of 384; adjust as needed
-    return embeddings, ave_embeddings
 
-def build_index(data_dir: str, rating_threshold: float = 4.0):
+def build_index(data_dir: str,master:pd.DataFrame ,rating_threshold: float = 4.0):
     client = EmbeddingClient()
+
     folders = find_data_folders(data_dir)
     folder_basename = os.path.basename(data_dir)
     smith = LangSmithIntegration()
-    index_df = pd.DataFrame()
     # create examples as intermediate data
     examples = []
     for folder in folders:
         dataset = Dataset.from_folder(folder)
+        dataset.apply_master_info(master)
         add_embeddings(dataset=dataset, client=client, rating_threshold=rating_threshold)
         dataset.save(os.path.join(folder, "dataset_with_emb.xlsx"))
-        dataset_embeddings, ave_embeddings = fetch_dataset_embeddings(dataset=dataset)
+        dataset_embeddings, ave_embeddings = dataset.fetch_dataset_embeddings()
         examples.append({
             "inputs": {"user_message": dataset.metadata['user_message']},
             "outputs": {"embedding": ave_embeddings},
@@ -175,11 +163,6 @@ def build_index(data_dir: str, rating_threshold: float = 4.0):
         smith_dataset = smith.create_dataset_from_dummy(dataset=index_dataset)
 
     return index_dataset
-
-def load_index(path: str) -> Dict[str, Any]:
-    data = np.load(path, allow_pickle=True)
-    return {"embeddings": data["embeddings"], "meta": data["meta"]}
-
 
 def rank_query(index: str, dataset: str, top_k: int = 5) -> List[Dict[str, Any]]:
     client = EmbeddingClient()

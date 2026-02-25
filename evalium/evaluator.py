@@ -130,8 +130,8 @@ def add_embeddings(dataset: Dataset, client: EmbeddingClient, rating_threshold: 
         if resp_text.startswith("ERROR:"):
             print("Error response, skipping embedding")
             continue
-        if (example['rating'] is None) or (np.isnan(example['rating'])) or (example['rating'] <= rating_threshold):
-            continue
+#        if (example['rating'] is None) or (np.isnan(example['rating'])) or (example['rating'] <= rating_threshold):
+#            continue
         # retrieve embeddings
         emb = client.embed_texts([resp_text])[0]
 #         enc = json.dumps(emb.tolist())
@@ -164,32 +164,30 @@ def build_index(data_dir: str,master:pd.DataFrame ,rating_threshold: float = 4.0
 
     return index_dataset
 
-def rank_query(index: str, dataset: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def rank_query(index_path: str, dataset_folder: str, top_k: int = 5) -> List[Dict[str, Any]]:
     client = EmbeddingClient()
     smith = LangSmithIntegration()
     
-    fill_embeddings_if_missing(smith=smith, dataset_name=dataset, client=client)
+    index = Dataset.from_folder(index_path)
+    dataset = Dataset.from_folder(dataset_folder)
+    dataset.load_embeddings(dataset_folder)
+    add_embeddings(dataset=dataset, client=client, rating_threshold=-1.0)  # Add embeddings for all examples regardless of rating
+    user_message = dataset.metadata.get("user_message")
+    index_emb = index.df[index.df["user_message"] == user_message]["embedding"].values
 
-    first_ex = next(smith.client.list_examples(dataset_name=dataset))
-    user_message = first_ex.inputs.get("user_message")
-    index_ex = next(smith.client.list_examples(dataset_name=index, metadata={"user_message": user_message}))
-    index_emb = np.array(index_ex.outputs.get("embedding")).reshape(1, -1)
-
-    for example in smith.client.list_examples(dataset_name=dataset):
-        user_message = example.inputs.get("user_message")
-        if example.outputs.get("embedding"):
-            q_emb = example.outputs["embedding"]
-            q_emb = np.array(q_emb).reshape(1, -1)
+    for i , example in dataset.df.iterrows():
+        user_message = example["user_message"]
+        emb = dataset.embeddings.get(i)
+        if emb is not None:
+            q_emb = np.array(emb).reshape(1, -1)
         else:
             continue
         sims = cosine_similarity(index_emb, q_emb)
-        outputs = example.outputs
-        outputs["similarity"] = sims.flatten()[0]
-        smith.update_example(example_id=example.id, outputs=outputs)
+        dataset.df.at[i, "similarity"] = sims.flatten()[0]
 
     list_sims = []
-    for example in smith.client.list_examples(dataset_name=dataset):
-        sim = example.outputs.get("similarity")
+    for i , example in dataset.df.iterrows():
+        sim = example["similarity"]
         if sim is not None and isinstance(sim, (float, int)):
             list_sims.append((sim, example))
 

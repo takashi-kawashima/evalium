@@ -12,7 +12,7 @@ from dataset import load_master
 
 def build_index_cmd(args):
     master = load_master("data/Golden dataset")
-    dataset = build_index(args.data_dir, master=master,rating_threshold=args.threshold)
+    dataset = build_index(args.data_dir, master=master, rating_threshold=args.threshold)
     dataset.save(os.path.join(args.data_dir, "indexed_dataset.xlsx"))
     print(f"Index built, dataset id: {dataset.name}")
 

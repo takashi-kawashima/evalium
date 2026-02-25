@@ -2,9 +2,9 @@ import os
 import json
 import pandas as pd
 import hashlib
-from datetime import datetime
 from typing import Dict, Any
 from langsmith import Client
+from dataset import Dataset
 
 class LangSmithIntegration:
     client:Client
@@ -23,14 +23,44 @@ class LangSmithIntegration:
             return
         self.client = Client(api_key=key)
 
+    def create_dataset_from_dummy(self,dataset:Dataset):
+        try:
+            smith_dataset = self.client.create_dataset(
+                dataset_name=dataset.name,
+                description=dataset.description,
+                metadata=dataset.metadata
+            )
+            self.client.upload_dataframe(
+                name=dataset.name,
+                description=dataset.description,
+                df=dataset.df,
+                input_keys=dataset.input_keys,
+                output_keys=dataset.output_keys
+            )
+
+        except Exception as e:
+            print("Error sending to LangSmith:", e)
+            return False
+        return smith_dataset
+
     def create_dataset(
             self,
             dataset_name: str, 
             description: str, 
             df:pd.DataFrame,
             input_keys: list, 
-            output_keys: list) -> bool:
+            output_keys: list,
+            metadata: dict) -> bool:
         try:
+
+            self.client.create_dataset(
+                dataset_name=dataset_name,
+                description=description,
+                inputs_schema=input_keys,
+                outputs_schema=output_keys,
+                metadata=metadata
+            )
+
             self.client.upload_dataframe(
                 df=df,
                 input_keys=input_keys,

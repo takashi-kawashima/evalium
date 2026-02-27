@@ -23,7 +23,9 @@ class Conversation:
     def apply_master_info(self,master:pd.DataFrame):
         shopid = self.metadata['shop_id']
         topic = self.metadata['user_message']
-        rows = master.query(f'shop_id == {shopid} and topic == "{topic}" and conversation_step == 1')
+        conversation_name = self.name
+        rows = master.query(f'conversation == "{conversation_name}"')
+#        rows = master.query(f'shop_id == {shopid} and topic == "{topic}" and conversation_step == 1')
         self.df['rating'] = None
         self.df['case'] = None
         for _, row in rows.iterrows():

@@ -17,7 +17,7 @@ def rank_cmd(args):
     results = rank_query(args.index, args.dataset, top_k=args.top_k)
     print("Ranking results:")
     for i, res in enumerate(results): 
-        print(f"Rank {i+1}: id={res[1].id} , score={res[0]:.4f} , text={res[1].outputs.get('agent_response')}")
+        print(f"Rank {i+1}: id={res[1].name} , score={res[0]:.4f} , user_message ={res[1].user_message} ")
 
 def main():
     parser = argparse.ArgumentParser(description="Evalium CLI")

@@ -4,7 +4,7 @@ import pandas as pd
 import hashlib
 from typing import Dict, Any
 from langsmith import Client
-from dataset import Dataset
+from dataset import Conversation
 
 class LangSmithIntegration:
     client:Client
@@ -23,7 +23,7 @@ class LangSmithIntegration:
             return
         self.client = Client(api_key=key)
 
-    def create_dataset_from_dummy(self,dataset:Dataset):
+    def create_dataset_from_dummy(self,dataset:Conversation):
         try:
             smith_dataset = self.client.create_dataset(
                 dataset_name=dataset.name,

@@ -11,7 +11,6 @@ import numpy as np
 @dataclass
 class Conversation:
     name: str
-    turn: str
     path: Optional[str] = None
     description: Optional[str] = None
     df: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -39,6 +38,9 @@ class Conversation:
             self.df.at[best - 1, 'case'] = case
     
     def save(self):
+        meta_path = os.path.join(self.path, "metadata.json") if self.path else None
+        with open(meta_path, "w", encoding='utf-8') as f:
+            json.dump(self.metadata, f, indent=2, ensure_ascii=False)
         excel_path = os.path.join(self.path, "examples.xlsx") if self.path else None
         self.df.to_excel(excel_path, index=False)
         self.save_embeddings()
@@ -49,11 +51,18 @@ class Conversation:
         emb_df = pd.concat([emb_df, pd.DataFrame(emb_2d)], axis=1)
         path = os.path.join(self.path, "embeddings.csv")
         emb_df.to_csv(path, encoding="utf-8_sig", index=False)
-    
-    def load_embeddings(self, folder: str):
-        emb_df = load_embeddings(folder)
+
+    def load_embeddings(self, folder: str) -> Optional[np.ndarray]:
+        files = glob.glob(os.path.join(folder, "embeddings.csv"))
+        emb = files[0] if files else None
+        if emb:
+            emb_df = pd.read_csv(emb)
+        else:
+            return None
         if emb_df is not None:
             self.embeddings = {row['index']: row.drop('index').values for _, row in emb_df.iterrows()}
+        return None
+
 
     def fetch_dataset_embeddings(self):
         embeddings = []
@@ -80,10 +89,12 @@ class Conversation:
         values = [ex['embeddings'] for ex in examples]
         embeddings = dict(zip(keys, values)) 
         values = [ex['metadata'] for ex in examples]
-        metadata = dict(zip(keys, values)) 
+        metadata = dict(zip(keys, values))
+        metadata['name'] = dataset_name
+        metadata['path'] = path
+        metadata['turn'] = turn
         dataset = cls(
             name=dataset_name,
-            turn=turn,
             path=path,
             description="",
             df=df,
@@ -95,14 +106,14 @@ class Conversation:
         return dataset
 
     @classmethod
-    def from_path(cls, path:str, turn:str):
+    def from_index(cls, path:str):
+        # this is only for index file
         dataset_name = os.path.basename(path)
-        df = pd.read_excel(path)
+        df = pd.read_excel(os.path.join(path,"examples.xlsx"))
         if df is None:
             df = pd.DataFrame()
         dataset = cls(
             name = dataset_name,
-            turn = turn,
             path = path,
             description="",
             df=df,
@@ -110,12 +121,18 @@ class Conversation:
             output_keys=["embedding"],
             metadata={}
         )
+        dataset.load_embeddings(path)
         return dataset
 
     @classmethod
-    def from_folder(cls, folder: str, turn:str):
+    def from_folder(cls, folder: str, turn:str=""):
         dataset_name = os.path.basename(folder)
-        input_json = load_input_json(folder)
+        input_path = os.path.join(folder, "input.json")
+        with open(input_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        metadata['name'] = dataset_name
+        metadata['turn'] = turn
+        metadata['path'] = folder
         df = cls.load_df(folder)
         if df is None:
             df = pd.DataFrame()
@@ -124,16 +141,15 @@ class Conversation:
         rating_col = "rating"
         if rating_col not in df.columns:
             df[rating_col] = None
-        df['user_message'] = input_json['user_message']
+        df['user_message'] = metadata['user_message']
         dataset = cls(
-            name=dataset_name,
-            turn=turn,
+            name = dataset_name,
             path = folder,
-            description="",
+            description= "",
             df=df,
             input_keys=["user_message"],
             output_keys=[text_col,"run_index","follow_up_questions","tools_and_arguments","iteration_count","time_seconds","total_tokens","prompt_tokens","completion_tokens",rating_col],
-            metadata=input_json
+            metadata=metadata
         )
         dataset.load_embeddings(os.path.join(folder))
         return dataset
@@ -197,16 +213,5 @@ class Example:
     outputs: Dict[str, Any]
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-def load_embeddings(folder: str) -> Optional[np.ndarray]:
-    files = glob.glob(os.path.join(folder, "embeddings.csv"))
-    emb = files[0] if files else None
-    if emb:
-        df = pd.read_csv(emb)
-        return df
-    return None
 
-def load_input_json(folder: str) -> dict:
-    p = os.path.join(folder, "input.json")
-    with open(p, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data
+

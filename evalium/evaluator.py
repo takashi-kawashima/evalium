@@ -10,7 +10,7 @@ import openai
 from datetime import datetime, timezone
 from langsmith_integration import LangSmithIntegration
 from sklearn.metrics.pairwise import cosine_similarity
-from dataset import Dataset, Example
+from dataset import Conversations, Conversation, Example
 
 # Load local.env if present
 load_dotenv("local.env")
@@ -41,7 +41,7 @@ import openai
         if not texts:
             return np.empty((0,))
 
-        # Try 0: openai.OpenAI (user example)
+        # Try 0: openai.OpenAI
         try:
             from openai import OpenAI
             client = OpenAI(
@@ -56,7 +56,7 @@ import openai
         except Exception:
             pass
 
-        # Try 1: langchain_openai.OpenAIEmbeddings (user example)
+        # Try 1: langchain_openai.OpenAIEmbeddings
         try:
             from langchain_openai import OpenAIEmbeddings
 
@@ -70,7 +70,7 @@ import openai
         except Exception:
             pass
 
-        # Try 2: langchain_openai.AzureOpenAIEmbeddings (user example)
+        # Try 2: langchain_openai.AzureOpenAIEmbeddings
         try:
             from langchain_openai import AzureOpenAIEmbeddings
 
@@ -117,18 +117,18 @@ def find_data_folders(root: str) -> List[str]:
             folders.append(path)
     return folders
 
-def add_embeddings(dataset: Dataset, client: EmbeddingClient, rating_threshold: float):
+def add_embeddings(dataset: Conversation, client: EmbeddingClient, rating_threshold: float):
     # for each example, if rating is above threshold, add embedding of agent_response to dataset.embeddings
     for i, example in dataset.df.iterrows():
         if dataset.embeddings.get(i) is not None:
             emb = dataset.embeddings[i]
-            print("already has embedding, using existing one")
+            #print("already has embedding, using existing one")
             continue
         resp_text = example["agent_response"]
         if not resp_text:
             continue
         if resp_text.startswith("ERROR:"):
-            print("Error response, skipping embedding")
+            #print("Error response, skipping embedding")
             continue
 #        if (example['rating'] is None) or (np.isnan(example['rating'])) or (example['rating'] <= rating_threshold):
 #            continue
@@ -138,27 +138,31 @@ def add_embeddings(dataset: Dataset, client: EmbeddingClient, rating_threshold: 
         dataset.embeddings[i] = emb
 
 
-def build_index(data_dir: str,master:pd.DataFrame ,rating_threshold: float = 4.0):
+def build_index(data_dir: str,rating_threshold: float = 4.0):
     client = EmbeddingClient()
+
+    conversations = Conversations.from_folder(data_dir)  # just to validate folder structure and load metadata
 
     folders = find_data_folders(data_dir)
     folder_basename = os.path.basename(data_dir)
     smith = LangSmithIntegration()
     # create examples as intermediate data
-    examples = []
-    for folder in folders:
-        dataset = Dataset.from_folder(folder)
-        dataset.apply_master_info(master)
-        add_embeddings(dataset=dataset, client=client, rating_threshold=rating_threshold)
-        dataset.save(os.path.join(folder, "dataset_with_emb.xlsx"))
-        dataset_embeddings, ave_embeddings = dataset.fetch_dataset_embeddings()
-        examples.append({
-            "inputs": {"user_message": dataset.metadata['user_message']},
-            "outputs": {"embedding": ave_embeddings},
-            "metadata": dataset.metadata
+    index_examples = []
+    for key, conv in conversations.conversations.items():
+        conv.apply_master_info(conversations.master)
+        add_embeddings(dataset=conv, client=client, rating_threshold=rating_threshold)
+        conv.save()
+        conv_embeddings, ave_embeddings = conv.fetch_dataset_embeddings()
+        # build index examples
+        index_examples.append({
+            "inputs": conv.name,
+            "embeddings": ave_embeddings,
+            "metadata": conv.metadata
         })
-    index_dataset_name = f"Indexed_dataset_{folder_basename}"
-    index_dataset = Dataset.from_examples(examples=examples, dataset_name=index_dataset_name)
+        print(f"Processed conversation {conv.name}, user_message: {conv.metadata['user_message']}")
+
+    index_dataset = Conversation.from_examples(examples=index_examples,turn = "", path=data_dir, dataset_name="index_dataset")
+    index_dataset.save()
     if smith is not None:
         smith_dataset = smith.create_dataset_from_dummy(dataset=index_dataset)
 
@@ -167,14 +171,15 @@ def build_index(data_dir: str,master:pd.DataFrame ,rating_threshold: float = 4.0
 def rank_query(index_path: str, dataset_folder: str, top_k: int = 5) -> List[Dict[str, Any]]:
     client = EmbeddingClient()
     smith = LangSmithIntegration()
-    
-    index = Dataset.from_folder(index_path)
-    dataset = Dataset.from_folder(dataset_folder)
-    dataset.load_embeddings(dataset_folder)
+    index = Conversation.from_index(index_path)
+    dataset = Conversation.from_folder(dataset_folder)
     add_embeddings(dataset=dataset, client=client, rating_threshold=-1.0)  # Add embeddings for all examples regardless of rating
-    user_message = dataset.metadata.get("user_message")
-    index_emb = index.df[index.df["user_message"] == user_message]["embedding"].values
-
+    dataset.save()
+    # retrieve conversataion key (conversation)
+    conversation_name = dataset.metadata.get("name")
+    index_emb = index.embeddings[conversation_name]
+    # index_emb = np.array([float(s) for s in emb_str.strip('[]').split()])
+    index_emb = np.array(index_emb).reshape(1, -1)
     for i , example in dataset.df.iterrows():
         user_message = example["user_message"]
         emb = dataset.embeddings.get(i)

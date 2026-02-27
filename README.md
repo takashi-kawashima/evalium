@@ -54,10 +54,18 @@ AZURE_OPENAI_API_VERSION="2023-05-15"
 
 ```
 data/
-└── 1/                          # フォルダごとに1つの入力
+├──master.xlsx                  # マスターファイル
+└── 1/                          # フォルダごとに1つの入力 turnに対応したりする
     ├── input.json              # ユーザー入力（JSON）
     └── responses.xlsx          # 応答一覧（Excel: 列は agent_response, rating など）
 ```
+
+**master.xlsx  の列:**
+- `conversation` （必須）: キーとなるexamplesフォルダの名称 例："こんにちは_20回_free_v02_100064_20260218_162721"
+- `case` （必須）: ケースID 同じtopicに対して複数選択された場合のインデックス
+- `best_response_id` : 最良のexampleID
+- `ok_response_id` : 次点のexampleID
+- `turn` : 何回目の問か
 
 **input.json の例:**
 ```json
@@ -68,9 +76,10 @@ data/
 }
 ```
 
-**Excel の列:**
+**responses.xlsx  の列:**
+- `run_index` （必須）: インデックス
 - `agent_response` （必須）: LLMの応答テキスト
-- `rating` （オプション）: 人手評価スコア（閾値のデフォルト：4.0以上を良応答として扱う）
+- `rating` （オプション）: 人手評価スコア（閾値のデフォルト：4.0以上を良応答として扱う）:masterファイルから自動で付与される
 
 ## 使用方法
 

@@ -1,11 +1,12 @@
-from dataclasses import dataclass, field
-from os import path
-import pandas as pd
-from typing import Any, Dict, List, Optional
-import os
-import json
 import glob
+import json
+import os
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
 import numpy as np
+import pandas as pd
+
 
 @dataclass
 class Conversation:
@@ -18,34 +19,42 @@ class Conversation:
     metadata: Dict[str, Any] = field(default_factory=dict)
     embeddings: Dict[str, Any] = field(default_factory=dict)
 
-    def apply_master_info(self,master:pd.DataFrame):
-        shopid = self.metadata['shop_id']
-        topic = self.metadata['user_message']
+    def apply_master_info(self, master: pd.DataFrame):
+        shopid = self.metadata["shop_id"]
+        topic = self.metadata["user_message"]
         conversation_name = self.name
         rows = master.query(f'conversation == "{conversation_name}"')
-#        rows = master.query(f'shop_id == {shopid} and topic == "{topic}" and conversation_step == 1')
-        self.df['rating'] = None
-        self.df['case'] = None
+        #        rows = master.query(f'shop_id == {shopid} and topic == "{topic}" and conversation_step == 1')
+        self.df["rating"] = None
+        self.df["case"] = None
         for _, row in rows.iterrows():
-            case = row['case']
-            best = row['best_response_id']
-            oks = row['ok_response_id'].split(",") if pd.notna(row['ok_response_id']) else []
-            follow_up_qs = row['ok_follow_up_list'].split(",") if pd.notna(row['ok_follow_up_list']) else []
+            case = row["case"]
+            best = row["best_response_id"]
+            oks = (
+                row["ok_response_id"].split(",")
+                if pd.notna(row["ok_response_id"])
+                else []
+            )
+            follow_up_qs = (
+                row["ok_follow_up_list"].split(",")
+                if pd.notna(row["ok_follow_up_list"])
+                else []
+            )
             for ok in oks:
-                self.df.at[int(ok) - 1, 'rating'] = 3.0
-            self.df.at[best - 1, 'rating'] = 5.0
-            self.df.at[best - 1, 'case'] = case
-    
+                self.df.at[int(ok) - 1, "rating"] = 3.0
+            self.df.at[best - 1, "rating"] = 5.0
+            self.df.at[best - 1, "case"] = case
+
     def save(self):
         meta_path = os.path.join(self.path, "metadata.json") if self.path else None
-        with open(meta_path, "w", encoding='utf-8') as f:
+        with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(self.metadata, f, indent=2, ensure_ascii=False)
         excel_path = os.path.join(self.path, "examples.xlsx") if self.path else None
         self.df.to_excel(excel_path, index=False)
         self.save_embeddings()
 
     def save_embeddings(self):
-        emb_df = pd.DataFrame({'index':self.embeddings.keys()})
+        emb_df = pd.DataFrame({"index": self.embeddings.keys()})
         emb_2d = np.array(list(self.embeddings.values()))
         emb_df = pd.concat([emb_df, pd.DataFrame(emb_2d)], axis=1)
         path = os.path.join(self.path, "embeddings.csv")
@@ -59,9 +68,10 @@ class Conversation:
         else:
             return None
         if emb_df is not None:
-            self.embeddings = {row['index']: row.drop('index').values for _, row in emb_df.iterrows()}
+            self.embeddings = {
+                row["index"]: row.drop("index").values for _, row in emb_df.iterrows()
+            }
         return None
-
 
     def fetch_dataset_embeddings(self):
         embeddings = []
@@ -74,24 +84,22 @@ class Conversation:
         if len(embeddings) > 0:
             ave_embeddings = np.mean(embeddings, axis=0, keepdims=False)
         else:
-            ave_embeddings = None # Assuming embedding size of 384; adjust as needed
+            ave_embeddings = None  # Assuming embedding size of 384; adjust as needed
         return embeddings, ave_embeddings
 
     @classmethod
-    def from_examples(cls, examples, path: str, dataset_name: str, turn:str):
-        df = pd.DataFrame(
-            {"inputs" : [ex['inputs'] for ex in examples]}
-        )
-        input_keys = [ex['inputs'] for ex in examples]
+    def from_examples(cls, examples, path: str, dataset_name: str, turn: str):
+        df = pd.DataFrame({"inputs": [ex["inputs"] for ex in examples]})
+        input_keys = [ex["inputs"] for ex in examples]
 
-        keys = [ex['inputs'] for ex in examples]
-        values = [ex['embeddings'] for ex in examples]
-        embeddings = dict(zip(keys, values)) 
-        values = [ex['metadata'] for ex in examples]
+        keys = [ex["inputs"] for ex in examples]
+        values = [ex["embeddings"] for ex in examples]
+        embeddings = dict(zip(keys, values))
+        values = [ex["metadata"] for ex in examples]
         metadata = dict(zip(keys, values))
-        metadata['name'] = dataset_name
-        metadata['path'] = path
-        metadata['turn'] = turn
+        metadata["name"] = dataset_name
+        metadata["path"] = path
+        metadata["turn"] = turn
         dataset = cls(
             name=dataset_name,
             path=path,
@@ -100,38 +108,38 @@ class Conversation:
             input_keys=input_keys,
             output_keys=[],
             embeddings=embeddings,
-            metadata=metadata
+            metadata=metadata,
         )
         return dataset
 
     @classmethod
-    def from_index(cls, path:str):
+    def from_index(cls, path: str):
         # this is only for index file
         dataset_name = os.path.basename(path)
-        df = pd.read_excel(os.path.join(path,"examples.xlsx"))
+        df = pd.read_excel(os.path.join(path, "examples.xlsx"))
         if df is None:
             df = pd.DataFrame()
         dataset = cls(
-            name = dataset_name,
-            path = path,
+            name=dataset_name,
+            path=path,
             description="",
             df=df,
             input_keys=["user_message"],
             output_keys=["embedding"],
-            metadata={}
+            metadata={},
         )
         dataset.load_embeddings(path)
         return dataset
 
     @classmethod
-    def from_folder(cls, folder: str, turn:str=""):
+    def from_folder(cls, folder: str, turn: str = ""):
         dataset_name = os.path.basename(folder)
         input_path = os.path.join(folder, "input.json")
         with open(input_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
-        metadata['name'] = dataset_name
-        metadata['turn'] = turn
-        metadata['path'] = folder
+        metadata["name"] = dataset_name
+        metadata["turn"] = turn
+        metadata["path"] = folder
         df = cls.load_df(folder)
         if df is None:
             df = pd.DataFrame()
@@ -140,21 +148,32 @@ class Conversation:
         rating_col = "rating"
         if rating_col not in df.columns:
             df[rating_col] = None
-        df['user_message'] = metadata['user_message']
+        df["user_message"] = metadata["user_message"]
         dataset = cls(
-            name = dataset_name,
-            path = folder,
-            description= "",
+            name=dataset_name,
+            path=folder,
+            description="",
             df=df,
             input_keys=["user_message"],
-            output_keys=[text_col,"run_index","follow_up_questions","tools_and_arguments","iteration_count","time_seconds","total_tokens","prompt_tokens","completion_tokens",rating_col],
-            metadata=metadata
+            output_keys=[
+                text_col,
+                "run_index",
+                "follow_up_questions",
+                "tools_and_arguments",
+                "iteration_count",
+                "time_seconds",
+                "total_tokens",
+                "prompt_tokens",
+                "completion_tokens",
+                rating_col,
+            ],
+            metadata=metadata,
         )
         dataset.load_embeddings(os.path.join(folder))
         return dataset
-    
+
     @classmethod
-    def load_df(cls,folder: str) -> Optional[pd.DataFrame]:
+    def load_df(cls, folder: str) -> Optional[pd.DataFrame]:
         files = glob.glob(os.path.join(folder, "examples.xlsx"))
         emb = files[0] if files else None
         if emb:
@@ -163,11 +182,12 @@ class Conversation:
             files = glob.glob(os.path.join(folder, "*.xlsx"))
             excel = files[0] if files else None
             df = pd.read_excel(excel, index_col=0) if excel else None
-        df.dropna(how='all', inplace=True)
-        df['agent_response'] = df['agent_response'].astype(str)
-        df['follow_up_questions'] = df['follow_up_questions'].astype(str)
-        df['tools_and_arguments'] = df['tools_and_arguments'].astype(str)
+        df.dropna(how="all", inplace=True)
+        df["agent_response"] = df["agent_response"].astype(str)
+        df["follow_up_questions"] = df["follow_up_questions"].astype(str)
+        df["tools_and_arguments"] = df["tools_and_arguments"].astype(str)
         return df
+
 
 @dataclass
 class Conversations:
@@ -175,7 +195,6 @@ class Conversations:
     description: Optional[str] = None
     master: pd.DataFrame = field(default_factory=pd.DataFrame)
     conversations: Dict[str, Conversation] = field(default_factory=dict)
-
 
     @classmethod
     def from_folder(cls, folder: str):
@@ -194,15 +213,23 @@ class Conversations:
                         conv = Conversation.from_folder(examples_path, turn=turn)
                         conversations[exmaples_name] = conv
 
-        return cls(name=name, description=description, master=master, conversations=conversations)
+        return cls(
+            name=name,
+            description=description,
+            master=master,
+            conversations=conversations,
+        )
 
     @classmethod
-    def load_master(cls,master_file) -> pd.DataFrame:
+    def load_master(cls, master_file) -> pd.DataFrame:
         if not os.path.exists(master_file):
-            print(f"Master table not found at {master_file}, please run the evaluation first to generate it.")
-            return pd.DataFrame() # return empty dataframe if master not found
+            print(
+                f"Master table not found at {master_file}, please run the evaluation first to generate it."
+            )
+            return pd.DataFrame()  # return empty dataframe if master not found
         master_df = pd.read_excel(master_file)
         return master_df
+
 
 @dataclass
 class Example:
@@ -210,6 +237,3 @@ class Example:
     inputs: Dict[str, Any]
     outputs: Dict[str, Any]
     metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-

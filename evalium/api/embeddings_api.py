@@ -1,14 +1,16 @@
 import os
+from typing import List, Optional
+
 import numpy as np
-from typing import List, Dict, Any, Optional
+
 
 class EmbeddingClient:
     """Embedding client that uses Rakuten Gateway via LangChain-style embeddings.
-import openai
+    import openai
 
-    This tool is configured to operate in GW-only mode: `RAKUTEN_AI_GATEWAY_KEY` must be set.
-    It will attempt to use `langchain_openai.OpenAIEmbeddings` (or `AzureOpenAIEmbeddings`),
-    falling back to `langchain.embeddings.OpenAIEmbeddings` where available.
+        This tool is configured to operate in GW-only mode: `RAKUTEN_AI_GATEWAY_KEY` must be set.
+        It will attempt to use `langchain_openai.OpenAIEmbeddings` (or `AzureOpenAIEmbeddings`),
+        falling back to `langchain.embeddings.OpenAIEmbeddings` where available.
     """
 
     def __init__(self, model: Optional[str] = None):
@@ -16,7 +18,9 @@ import openai
 
         rak_key = os.getenv("RAKUTEN_AI_GATEWAY_KEY")
         if not rak_key:
-            raise RuntimeError("Rakuten Gateway only: set RAKUTEN_AI_GATEWAY_KEY in local.env")
+            raise RuntimeError(
+                "Rakuten Gateway only: set RAKUTEN_AI_GATEWAY_KEY in local.env"
+            )
 
         self._rakuten_key = rak_key
         # Default endpoints based on examples provided
@@ -30,13 +34,12 @@ import openai
         # Try 0: openai.OpenAI
         try:
             from openai import OpenAI
+
             client = OpenAI(
-                api_key=self._rakuten_key,
-                base_url=self._rakuten_base_openai
+                api_key=self._rakuten_key, base_url=self._rakuten_base_openai
             )
             response = client.embeddings.create(
-                input=texts,
-                model="text-embedding-3-small"
+                input=texts, model="text-embedding-3-small"
             )
             return np.array([d.embedding for d in response.data])
         except Exception:
@@ -81,12 +84,14 @@ import openai
             )
             vecs = emb.embed_documents(texts)
             return np.array(vecs, dtype=np.float32)
-        except Exception as e:
+        except Exception:
             # Final fallback: direct OpenAI-compatible API call to Rakuten GW
             try:
                 from openai import OpenAI
 
-                client = OpenAI(api_key=self._rakuten_key, base_url=self._rakuten_base_openai)
+                client = OpenAI(
+                    api_key=self._rakuten_key, base_url=self._rakuten_base_openai
+                )
                 resp = client.embeddings.create(model=self.model, input=texts)
                 return np.array([d.embedding for d in resp.data], dtype=np.float32)
             except Exception as e2:

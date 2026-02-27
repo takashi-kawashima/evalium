@@ -45,8 +45,8 @@ class Conversation:
         emb_df = pd.DataFrame({'index':self.embeddings.keys()})
         emb_2d = np.array(list(self.embeddings.values()))
         emb_df = pd.concat([emb_df, pd.DataFrame(emb_2d)], axis=1)
-        path = os.path.join(os.path.dirname(self.path), "embeddings.csv")
-        emb_df.to_csv(path, index=False)
+        path = os.path.join(self.path, "embeddings.csv")
+        emb_df.to_csv(path, encoding="utf-8_sig", index=False)
     
     def load_embeddings(self, folder: str):
         emb_df = load_embeddings(folder)
@@ -69,11 +69,16 @@ class Conversation:
 
     @classmethod
     def from_examples(cls, examples, path: str, dataset_name: str, turn:str):
-        df = pd.DataFrame([{**example['inputs'], **example['outputs']} for example in examples])
-        input_keys = list(examples[0]['inputs'].keys()) if examples else []
-        output_keys = list(examples[0]['outputs'].keys()) if examples else []
-        embeddings = examples[0]['embeddings'] if examples else {}
-        metadata = examples[0]['metadata'] if examples else {}
+        df = pd.DataFrame(
+            {"inputs" : [ex['inputs'] for ex in examples]}
+        )
+        input_keys = [ex['inputs'] for ex in examples]
+
+        keys = [ex['inputs'] for ex in examples]
+        values = [ex['embeddings'] for ex in examples]
+        embeddings = dict(zip(keys, values)) 
+        values = [ex['metadata'] for ex in examples]
+        metadata = dict(zip(keys, values)) 
         dataset = cls(
             name=dataset_name,
             turn=turn,
@@ -81,7 +86,7 @@ class Conversation:
             description="",
             df=df,
             input_keys=input_keys,
-            output_keys=output_keys,
+            output_keys=[],
             embeddings=embeddings,
             metadata=metadata
         )

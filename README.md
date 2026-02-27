@@ -77,18 +77,17 @@ data/
 ### インデックス作成
 
 ```bash
-python -m evalium.cli build-index --data-dir data --out "my_golden_dataset"
+python -m evalium.cli build-index --data-dir "my_dataset" --threshold 4.0
 ```
 
 **オプション:**
-- `--data-dir`: 入力フォルダ
-- `--out`: LangSmith で作成するデータセット名
+- `--data-dir`: 入力フォルダ（複数のCOnversation 階層を含む）
 - `--threshold`: 評価スコアの下限値（デフォルト：4.0）
 
 **実行例:**
 ```bash
 # 全データをインデックス化して LangSmith に保存
-python -m evalium.cli build-index --data-dir data --out "golden_responses_v1" --threshold 4.0
+python -m evalium.cli build-index --data-dir "data/golden-dataset" --threshold -1.0
 ```
 
 **出力:**
@@ -98,13 +97,18 @@ python -m evalium.cli build-index --data-dir data --out "golden_responses_v1" --
 ### ランキング（クエリから最も類似した応答を検索）
 
 ```bash
-python -m evalium.cli rank --index "index-name" --dataset "my_golden_dataset" --top-k 5
+python -m evalium.cli rank --index "index-dataset-folder" --dataset "target-dataset-folder" --top-k 5
 ```
+**オプション:**
+- `--index`: indexされたデータセットのフォルダ（embeddings.csvが存在するもの）
+- `--dataset`: 類似度計算、ランキング対象となるデータセットのフォルダ
 
 **実行例:**
 ```bash
-python -m evalium.cli rank --index "my-index" --dataset "golden_responses_v1" --top-k 10
+python -m evalium.cli rank --index "data/goldendatasetv1" --dataset "data/new_dataset" --top-k 10
 ```
+
+
 
 **出力形式:**
 ```

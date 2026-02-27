@@ -7,7 +7,6 @@ import json
 import glob
 import numpy as np
 
-
 @dataclass
 class Conversation:
     name: str
@@ -169,7 +168,6 @@ class Conversation:
         df['follow_up_questions'] = df['follow_up_questions'].astype(str)
         df['tools_and_arguments'] = df['tools_and_arguments'].astype(str)
         return df
-
 
 @dataclass
 class Conversations:

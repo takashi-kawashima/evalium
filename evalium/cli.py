@@ -1,13 +1,10 @@
 import argparse
-import json
-import os
 from pathlib import Path
 from dotenv import load_dotenv
+from evaluator import build_index, rank_query
 
 # load local.env for CLI use
 load_dotenv("local.env")
-
-from evaluator import build_index, rank_query
 
 def build_index_cmd(args):
     index_conv = build_index(args.data_dir, rating_threshold=args.threshold)

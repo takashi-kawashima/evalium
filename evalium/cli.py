@@ -8,13 +8,10 @@ from dotenv import load_dotenv
 load_dotenv("local.env")
 
 from evaluator import build_index, rank_query
-from dataset import load_master
 
 def build_index_cmd(args):
-    master = load_master("data/Golden dataset")
-    dataset = build_index(args.data_dir, master=master, rating_threshold=args.threshold)
-    dataset.save(os.path.join(args.data_dir, "indexed_dataset.xlsx"))
-    print(f"Index built, dataset id: {dataset.name}")
+    index_conv = build_index(args.data_dir, rating_threshold=args.threshold)
+    print(f"Index built, dataset id: {index_conv.name}")
 
 def rank_cmd(args):
     results = rank_query(args.index, args.dataset, top_k=args.top_k)

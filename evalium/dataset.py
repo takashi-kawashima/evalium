@@ -7,9 +7,12 @@ import json
 import glob
 import numpy as np
 
+
 @dataclass
-class Dataset:
+class Conversation:
     name: str
+    turn: str
+    path: Optional[str] = None
     description: Optional[str] = None
     df: pd.DataFrame = field(default_factory=pd.DataFrame)
     input_keys: List[str] = field(default_factory=list)
@@ -32,15 +35,17 @@ class Dataset:
                 self.df.at[int(ok) - 1, 'rating'] = 3.0
             self.df.at[best - 1, 'rating'] = 5.0
             self.df.at[best - 1, 'case'] = case
+    
+    def save(self):
+        excel_path = os.path.join(self.path, "examples.xlsx") if self.path else None
+        self.df.to_excel(excel_path, index=False)
+        self.save_embeddings()
 
-    def save(self, path: str):
-        self.df.to_excel(path, index=False)
-        self.save_embeddings(os.path.join(os.path.dirname(path), "embeddings.csv"))
-
-    def save_embeddings(self, path: str):
+    def save_embeddings(self):
         emb_df = pd.DataFrame({'index':self.embeddings.keys()})
         emb_2d = np.array(list(self.embeddings.values()))
         emb_df = pd.concat([emb_df, pd.DataFrame(emb_2d)], axis=1)
+        path = os.path.join(os.path.dirname(self.path), "embeddings.csv")
         emb_df.to_csv(path, index=False)
     
     def load_embeddings(self, folder: str):
@@ -63,26 +68,48 @@ class Dataset:
         return embeddings, ave_embeddings
 
     @classmethod
-    def from_examples(cls, examples, dataset_name: str):
+    def from_examples(cls, examples, path: str, dataset_name: str, turn:str):
         df = pd.DataFrame([{**example['inputs'], **example['outputs']} for example in examples])
         input_keys = list(examples[0]['inputs'].keys()) if examples else []
         output_keys = list(examples[0]['outputs'].keys()) if examples else []
+        embeddings = examples[0]['embeddings'] if examples else {}
         metadata = examples[0]['metadata'] if examples else {}
         dataset = cls(
             name=dataset_name,
+            turn=turn,
+            path=path,
             description="",
             df=df,
             input_keys=input_keys,
             output_keys=output_keys,
+            embeddings=embeddings,
             metadata=metadata
         )
         return dataset
 
     @classmethod
-    def from_folder(cls, folder: str):
+    def from_path(cls, path:str, turn:str):
+        dataset_name = os.path.basename(path)
+        df = pd.read_excel(path)
+        if df is None:
+            df = pd.DataFrame()
+        dataset = cls(
+            name = dataset_name,
+            turn = turn,
+            path = path,
+            description="",
+            df=df,
+            input_keys=["user_message"],
+            output_keys=["embedding"],
+            metadata={}
+        )
+        return dataset
+
+    @classmethod
+    def from_folder(cls, folder: str, turn:str):
         dataset_name = os.path.basename(folder)
         input_json = load_input_json(folder)
-        df = load_df(folder)
+        df = cls.load_df(folder)
         if df is None:
             df = pd.DataFrame()
         # detect likely columns
@@ -93,6 +120,8 @@ class Dataset:
         df['user_message'] = input_json['user_message']
         dataset = cls(
             name=dataset_name,
+            turn=turn,
+            path = folder,
             description="",
             df=df,
             input_keys=["user_message"],
@@ -101,6 +130,58 @@ class Dataset:
         )
         dataset.load_embeddings(os.path.join(folder))
         return dataset
+    
+    @classmethod
+    def load_df(cls,folder: str) -> Optional[pd.DataFrame]:
+        files = glob.glob(os.path.join(folder, "examples.xlsx"))
+        emb = files[0] if files else None
+        if emb:
+            df = pd.read_excel(emb)
+        else:
+            files = glob.glob(os.path.join(folder, "*.xlsx"))
+            excel = files[0] if files else None
+            df = pd.read_excel(excel, index_col=0) if excel else None
+        df.dropna(how='all', inplace=True)
+        df['agent_response'] = df['agent_response'].astype(str)
+        df['follow_up_questions'] = df['follow_up_questions'].astype(str)
+        df['tools_and_arguments'] = df['tools_and_arguments'].astype(str)
+        return df
+
+
+@dataclass
+class Conversations:
+    name: str
+    description: Optional[str] = None
+    master: pd.DataFrame = field(default_factory=pd.DataFrame)
+    conversations: Dict[str, Conversation] = field(default_factory=dict)
+
+
+    @classmethod
+    def from_folder(cls, folder: str):
+        name = os.path.basename(folder)
+        description = ""
+        master_file = os.path.join(folder, "golden_data_master_table.xlsx")
+        master = cls.load_master(master_file)
+        conversations = {}
+        for turn_path in glob.glob(os.path.join(folder, "*")):
+            if os.path.isdir(turn_path):
+                # retrieve turn name from folder
+                turn = os.path.basename(turn_path)
+                for examples_path in glob.glob(os.path.join(turn_path, "*")):
+                    if os.path.isdir(examples_path):
+                        exmaples_name = os.path.basename(examples_path)
+                        conv = Conversation.from_folder(examples_path, turn=turn)
+                        conversations[exmaples_name] = conv
+
+        return cls(name=name, description=description, master=master, conversations=conversations)
+
+    @classmethod
+    def load_master(cls,master_file) -> pd.DataFrame:
+        if not os.path.exists(master_file):
+            print(f"Master table not found at {master_file}, please run the evaluation first to generate it.")
+            return pd.DataFrame() # return empty dataframe if master not found
+        master_df = pd.read_excel(master_file)
+        return master_df
 
 @dataclass
 class Example:
@@ -122,26 +203,3 @@ def load_input_json(folder: str) -> dict:
     with open(p, "r", encoding="utf-8") as f:
         data = json.load(f)
     return data
-
-def load_df(folder: str) -> Optional[pd.DataFrame]:
-    files = glob.glob(os.path.join(folder, "dataset_with_emb.xlsx"))
-    emb = files[0] if files else None
-    if emb:
-        df = pd.read_excel(emb)
-    else:
-        files = glob.glob(os.path.join(folder, "*.xlsx"))
-        excel = files[0] if files else None
-        df = pd.read_excel(excel, index_col=0) if excel else None
-    df.dropna(how='all', inplace=True)
-    df['agent_response'] = df['agent_response'].astype(str)
-    df['follow_up_questions'] = df['follow_up_questions'].astype(str)
-    df['tools_and_arguments'] = df['tools_and_arguments'].astype(str)
-    return df
-
-def load_master(folder):
-    master_table = os.path.join(folder, "golden_data_master_table.xlsx")
-    if not os.path.exists(master_table):
-        print(f"Master table not found at {master_table}, please run the evaluation first to generate it.")
-        return
-    master_df = pd.read_excel(master_table)
-    return master_df

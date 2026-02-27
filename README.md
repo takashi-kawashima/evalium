@@ -54,10 +54,11 @@ AZURE_OPENAI_API_VERSION="2023-05-15"
 
 ```
 data/
-├──master.xlsx                  # マスターファイル
-└── 1/                          # フォルダごとに1つの入力 turnに対応したりする
-    ├── input.json              # ユーザー入力（JSON）
-    └── responses.xlsx          # 応答一覧（Excel: 列は agent_response, rating など）
+├──master.xlsx              # マスターファイル
+└── Turn 1/                 # Conversationを束ねるフォルダ　これはTurnに対応して特に階層として管理されない
+    └── Conversation 1/     # 1つのユーザーメッセージに対する、対話データセットを束ねるフォルダ　Excel内にExampleを複数持つ
+        ├── input.json      # ユーザー入力（JSON）
+        └── responses.xlsx  # 応答一覧（Excel: 列は agent_response, rating など）
 ```
 
 **master.xlsx  の列:**

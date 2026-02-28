@@ -15,11 +15,26 @@ def build_index_cmd(args):
 
 def rank_cmd(args):
     results = rank_query(args.index, args.dataset, top_k=args.top_k)
-    print("Ranking results:")
-    for i, res in enumerate(results):
-        print(
-            f"Rank {i + 1}: id={res[1].name} , score={res[0]:.4f} , user_message ={res[1].user_message} "
-        )
+
+    print(f"\n=== Rank Results: {results['conversation_name']} ===\n")
+
+    print(f"[Score 2] Average similarity (full matrix): {results['average_similarity']:.4f}")
+    print(f"[Score 4] Avg vector vs avg vector:          {results['avg_vs_avg_similarity']:.4f}\n")
+
+    print(f"[Score 1] Best (rating=5) response top-{args.top_k}:")
+    for best_id, top_list in results["best_response_top_k"].items():
+        avg = results["best_avg_similarity"][best_id]
+        print(f"  Golden best id={best_id} (avg similarity to all new: {avg:.4f}):")
+        for rank, entry in enumerate(top_list, 1):
+            print(f"    Rank {rank}: new_id={entry['new_id']}, score={entry['score']:.4f}")
+    print()
+
+    print(f"[Score 3] Average vector vs new responses (top-{args.top_k}):")
+    for rank, entry in enumerate(results["average_vector_ranking"][:args.top_k], 1):
+        print(f"  Rank {rank}: new_id={entry['new_id']}, score={entry['score']:.4f}")
+
+    output_dir = results.get("_output_dir", args.dataset + "/rank_results")
+    print(f"\nResults saved to: {output_dir}")
 
 
 def main():

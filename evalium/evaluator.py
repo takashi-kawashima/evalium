@@ -1,10 +1,11 @@
+import glob
+import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 from dotenv import load_dotenv
-
-# from langsmith_integration import LangSmithIntegration
 from sklearn.metrics.pairwise import cosine_similarity
 
 from evalium.api.embeddings_api import EmbeddingClient
@@ -85,54 +86,134 @@ def build_index(data_dir: str, rating_threshold: float = 4.0):
     return index_dataset
 
 
+def _find_golden_conversation(
+    index_path: str, conversation_name: str
+) -> Optional[Conversation]:
+    for turn_path in glob.glob(os.path.join(index_path, "*")):
+        if os.path.isdir(turn_path):
+            conv_path = os.path.join(turn_path, conversation_name)
+            if os.path.isdir(conv_path) and os.path.exists(
+                os.path.join(conv_path, "input.json")
+            ):
+                return Conversation.from_folder(conv_path)
+    return None
+
+
+def _collect_embeddings(conv: Conversation):
+    indices = []
+    embs = []
+    for i, _example in conv.df.iterrows():
+        emb = conv.embeddings.get(i)
+        if emb is not None:
+            indices.append(i)
+            embs.append(np.array(emb, dtype=np.float64))
+    return indices, np.array(embs) if embs else np.empty((0, 0))
+
+
 def rank_query(
     index_path: str, dataset_folder: str, top_k: int = 5
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     client = EmbeddingClient()
-    # smith = LangSmithIntegration()
-    index = Conversation.from_index(index_path)
+
+    # --- Load new dataset and ensure embeddings exist ---
     dataset = Conversation.from_folder(dataset_folder)
-    add_embeddings(
-        dataset=dataset, client=client, rating_threshold=-1.0
-    )  # Add embeddings for all examples regardless of rating
+    add_embeddings(dataset=dataset, client=client, rating_threshold=-1.0)
     dataset.save()
-    # retrieve conversataion key (conversation)
+
     conversation_name = dataset.metadata.get("name")
-    index_emb = index.embeddings[conversation_name]
-    # index_emb = np.array([float(s) for s in emb_str.strip('[]').split()])
-    index_emb = np.array(index_emb).reshape(1, -1)
-    for i, example in dataset.df.iterrows():
-        user_message = example["user_message"]
-        emb = dataset.embeddings.get(i)
-        if emb is not None:
-            q_emb = np.array(emb).reshape(1, -1)
-        else:
-            continue
-        sims = cosine_similarity(index_emb, q_emb)
-        dataset.df.at[i, "similarity"] = sims.flatten()[0]
 
-    list_sims = []
-    for i, example in dataset.df.iterrows():
-        sim = example["similarity"]
-        if sim is not None and isinstance(sim, (float, int)) and not np.isnan(sim):
-            list_sims.append((sim, example))
+    # --- Load the matching golden conversation (individual embeddings) ---
+    golden_conv = _find_golden_conversation(index_path, conversation_name)
+    if golden_conv is None:
+        raise ValueError(
+            f"Golden conversation '{conversation_name}' not found under {index_path}"
+        )
 
-    ranking = sorted(list_sims, key=lambda x: x[0], reverse=True)
-    return ranking[:top_k]
+    golden_indices, golden_embs = _collect_embeddings(golden_conv)
+    new_indices, new_embs = _collect_embeddings(dataset)
 
-    # refs = idx["embeddings"]
-    # meta = list(idx["meta"])
-    # if refs.size == 0:
-    #     return []
+    if golden_embs.size == 0 or new_embs.size == 0:
+        raise ValueError("No embeddings found for golden or new dataset")
 
-    # client = EmbeddingClient()
-    # q_emb = client.embed_texts([query])[0]
+    # ========================================================
+    # 20 × 20 similarity matrix
+    # ========================================================
+    sim_matrix = cosine_similarity(golden_embs, new_embs)
+    sim_df = pd.DataFrame(
+        sim_matrix,
+        index=pd.Index(golden_indices, name="golden_run_index"),
+        columns=pd.Index(new_indices, name="new_run_index"),
+    )
 
-    # from sklearn.metrics.pairwise import cosine_similarity
+    # ========================================================
+    # Score 1: best (rating=5) vs new top_k
+    # ========================================================
+    best_indices = [
+        i
+        for i, ex in golden_conv.df.iterrows()
+        if ex.get("rating") == 5.0 and i in golden_indices
+    ]
+    best_response_top_k: Dict[str, list] = {}
+    best_avg_similarities: Dict[str, float] = {}
+    for bi in best_indices:
+        row_pos = golden_indices.index(bi)
+        sims_row = sim_matrix[row_pos]
+        best_avg_similarities[str(bi)] = round(float(np.mean(sims_row)), 6)
+        top_k_pos = np.argsort(-sims_row)[:top_k]
+        best_response_top_k[str(bi)] = [
+            {"new_id": int(new_indices[j]), "score": round(float(sims_row[j]), 6)}
+            for j in top_k_pos
+        ]
 
-    # sims = cosine_similarity(refs, q_emb.reshape(1, -1)).reshape(-1)
-    # order = np.argsort(-sims)[:top_k]
-    # results = []
-    # for i in order:
-    #     results.append({"score": float(sims[i]), "meta": meta[i]})
-    # return results
+    # ========================================================
+    # Score 2: average similarity of full matrix
+    # ========================================================
+    average_similarity = round(float(np.mean(sim_matrix)), 6)
+
+    # ========================================================
+    # Score 3: golden average vector vs each new response
+    # ========================================================
+    index = Conversation.from_index(index_path)
+    golden_avg_emb = np.array(index.embeddings[conversation_name]).reshape(1, -1)
+    avg_vec_sims = cosine_similarity(golden_avg_emb, new_embs).flatten()
+    avg_vector_ranking = sorted(
+        [
+            {"new_id": int(new_indices[j]), "score": round(float(avg_vec_sims[j]), 6)}
+            for j in range(len(new_indices))
+        ],
+        key=lambda x: x["score"],
+        reverse=True,
+    )
+
+    # ========================================================
+    # Score 4: golden avg vector vs new avg vector
+    # ========================================================
+    new_avg_emb = np.mean(new_embs, axis=0, keepdims=True)
+    avg_vs_avg_similarity = round(
+        float(cosine_similarity(golden_avg_emb, new_avg_emb).flatten()[0]), 6
+    )
+
+    # ========================================================
+    # Save results
+    # ========================================================
+    output_dir = os.path.join(dataset.path, "rank_results")
+    os.makedirs(output_dir, exist_ok=True)
+
+    sim_df.to_csv(
+        os.path.join(output_dir, "similarity_matrix.csv"), encoding="utf-8_sig"
+    )
+
+    results = {
+        "conversation_name": conversation_name,
+        "best_response_top_k": best_response_top_k,
+        "best_avg_similarity": best_avg_similarities,
+        "average_similarity": average_similarity,
+        "avg_vs_avg_similarity": avg_vs_avg_similarity,
+        "average_vector_ranking": avg_vector_ranking,
+    }
+    with open(
+        os.path.join(output_dir, "rank_results.json"), "w", encoding="utf-8"
+    ) as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+
+    return results

@@ -41,16 +41,16 @@ class Conversation:
                 else []
             )
             for ok in oks:
-                self.df.at[int(ok) - 1, "rating"] = 3.0
-            self.df.at[best - 1, "rating"] = 5.0
-            self.df.at[best - 1, "case"] = case
+                self.df.at[int(ok), "rating"] = 3.0
+            self.df.at[best, "rating"] = 5.0
+            self.df.at[best, "case"] = case
 
     def save(self):
         meta_path = os.path.join(self.path, "metadata.json") if self.path else None
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(self.metadata, f, indent=2, ensure_ascii=False)
         excel_path = os.path.join(self.path, "examples.xlsx") if self.path else None
-        self.df.to_excel(excel_path, index=False)
+        self.df.to_excel(excel_path, index=True)
         self.save_embeddings()
 
     def save_embeddings(self):
@@ -119,6 +119,8 @@ class Conversation:
         df = pd.read_excel(os.path.join(path, "examples.xlsx"))
         if df is None:
             df = pd.DataFrame()
+        if "run_index" in df.columns:
+            df = df.set_index("run_index")
         dataset = cls(
             name=dataset_name,
             path=path,
@@ -181,8 +183,12 @@ class Conversation:
         else:
             files = glob.glob(os.path.join(folder, "*.xlsx"))
             excel = files[0] if files else None
-            df = pd.read_excel(excel, index_col=0) if excel else None
+            df = pd.read_excel(excel) if excel else None
+        if df is None:
+            return None
         df.dropna(how="all", inplace=True)
+        if "run_index" in df.columns:
+            df = df.set_index("run_index")
         df["agent_response"] = df["agent_response"].astype(str)
         df["follow_up_questions"] = df["follow_up_questions"].astype(str)
         df["tools_and_arguments"] = df["tools_and_arguments"].astype(str)

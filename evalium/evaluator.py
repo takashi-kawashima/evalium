@@ -33,7 +33,7 @@ def add_embeddings(
             # print("already has embedding, using existing one")
             continue
         resp_text = example["agent_response"]
-        if not resp_text:
+        if not isinstance(resp_text, str) or not resp_text or resp_text == "nan":
             continue
         if resp_text.startswith("ERROR:"):
             # print("Error response, skipping embedding")
@@ -114,7 +114,7 @@ def rank_query(
     list_sims = []
     for i, example in dataset.df.iterrows():
         sim = example["similarity"]
-        if sim is not None and isinstance(sim, (float, int)):
+        if sim is not None and isinstance(sim, (float, int)) and not np.isnan(sim):
             list_sims.append((sim, example))
 
     ranking = sorted(list_sims, key=lambda x: x[0], reverse=True)

@@ -155,6 +155,37 @@ Rank 2: id=def-456 , score=0.7891 , text=ご質問ありがとうございます
 - クエリと候補テキストの意味が大きく異なっています
 - `--top-k` を増やして確認してください
 
+### 一括ランキング（フォルダ内の全データセットを順次実行）
+
+`scripts/rank_all.sh` を使うと、指定フォルダ直下の全サブフォルダに対して `rank` を一括実行できます。
+
+```bash
+bash scripts/rank_all.sh --dataset <親ディレクトリ> [--index <インデックス>] [--top-k <n>]
+```
+
+**オプション:**
+- `--dataset` （必須）: データセットのサブフォルダを含む親ディレクトリ
+- `--index`: ゴールデンデータセットのパス（デフォルト: `data/goldendataset`）
+- `--top-k`: 上位何件を表示するか（デフォルト: `5`）
+
+**実行例:**
+```bash
+# data/baseline/ 直下の全フォルダに対してランキングを実行
+bash scripts/rank_all.sh --dataset data/baseline
+
+# インデックスと top-k を明示的に指定
+bash scripts/rank_all.sh --dataset data/baseline --index data/goldendataset --top-k 10
+```
+
+例えば `data/baseline/` に以下のようなサブフォルダがある場合：
+```
+data/baseline/
+├── 競合比較p1_case1_20回_free_v02_335894_20260225_114455/
+└── こんにちは_20回_free_v02_100064_20260218_162721/
+```
+
+各フォルダに対して順番に `uv run python -m evalium.cli rank` が実行されます。
+
 ## サンプル実行
 
 ```bash

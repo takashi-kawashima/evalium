@@ -1,3 +1,4 @@
+import csv
 import glob
 import json
 import os
@@ -110,6 +111,110 @@ def _collect_embeddings(conv: Conversation):
     return indices, np.array(embs) if embs else np.empty((0, 0))
 
 
+def _load_ok_follow_ups(
+    index_path: str, conversation_name: str
+) -> List[str]:
+    """Load ok_follow_up_list from the master table for a given conversation."""
+    master_file = os.path.join(index_path, "golden_data_master_table.xlsx")
+    if not os.path.exists(master_file):
+        return []
+    master = pd.read_excel(master_file)
+    rows = master.query(f'conversation == "{conversation_name}"')
+    if rows.empty:
+        return []
+
+    all_follow_ups: List[str] = []
+    for _, row in rows.iterrows():
+        raw = row.get("ok_follow_up_list")
+        if pd.isna(raw) or not str(raw).strip():
+            continue
+        parsed = list(csv.reader([str(raw)]))[0]
+        all_follow_ups.extend(s.strip() for s in parsed if s.strip())
+    return all_follow_ups
+
+
+def _parse_follow_up_questions(raw: str) -> List[str]:
+    """Parse the follow_up_questions column (JSON array) into a list of strings."""
+    if not isinstance(raw, str) or not raw or raw == "nan":
+        return []
+    try:
+        questions = json.loads(raw)
+        if isinstance(questions, list):
+            return [str(q).strip() for q in questions if str(q).strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return []
+
+
+def _evaluate_follow_ups(
+    dataset: Conversation,
+    ok_follow_ups: List[str],
+    client: EmbeddingClient,
+) -> Dict[str, Any]:
+    """Compute follow-up question similarity for every row in *dataset*.
+
+    Returns a dict ready to be serialised as follow_up_results.json.
+    """
+    conversation_name = dataset.metadata.get("name", "")
+
+    if not ok_follow_ups:
+        return {
+            "conversation_name": conversation_name,
+            "ok_follow_ups": [],
+            "per_row": {},
+            "overall_average_best_similarity": None,
+        }
+
+    ok_embs = np.array(client.embed_texts(ok_follow_ups), dtype=np.float64)
+
+    per_row: Dict[str, Any] = {}
+    row_avg_scores: List[float] = []
+
+    for i, example in dataset.df.iterrows():
+        questions = _parse_follow_up_questions(example.get("follow_up_questions", ""))
+        if not questions:
+            continue
+
+        gen_embs = np.array(client.embed_texts(questions), dtype=np.float64)
+        sim = cosine_similarity(gen_embs, ok_embs)  # (n_gen, n_ok)
+
+        best_matches = []
+        for q_idx, q_text in enumerate(questions):
+            best_ok_idx = int(np.argmax(sim[q_idx]))
+            best_matches.append(
+                {
+                    "generated": q_text,
+                    "best_ok": ok_follow_ups[best_ok_idx],
+                    "similarity": round(float(sim[q_idx, best_ok_idx]), 6),
+                }
+            )
+
+        avg_best = round(
+            float(np.mean([m["similarity"] for m in best_matches])), 6
+        )
+
+        per_row[str(i)] = {
+            "generated_questions": questions,
+            "similarity_matrix": [
+                [round(float(v), 6) for v in row] for row in sim.tolist()
+            ],
+            "best_matches": best_matches,
+            "average_best_similarity": avg_best,
+        }
+        row_avg_scores.append(avg_best)
+
+    overall = (
+        round(float(np.mean(row_avg_scores)), 6) if row_avg_scores else None
+    )
+
+    return {
+        "conversation_name": conversation_name,
+        "ok_follow_ups": ok_follow_ups,
+        "per_row": per_row,
+        "overall_average_best_similarity": overall,
+    }
+
+
 def rank_query(
     index_path: str, dataset_folder: str, top_k: int = 5
 ) -> Dict[str, Any]:
@@ -215,5 +320,15 @@ def rank_query(
         os.path.join(output_dir, "rank_results.json"), "w", encoding="utf-8"
     ) as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
+
+    # ========================================================
+    # Follow-up question similarity
+    # ========================================================
+    ok_follow_ups = _load_ok_follow_ups(index_path, conversation_name)
+    follow_up_results = _evaluate_follow_ups(dataset, ok_follow_ups, client)
+    with open(
+        os.path.join(output_dir, "follow_up_results.json"), "w", encoding="utf-8"
+    ) as f:
+        json.dump(follow_up_results, f, indent=2, ensure_ascii=False)
 
     return results

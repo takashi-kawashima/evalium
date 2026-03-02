@@ -48,7 +48,7 @@ def add_embeddings(
         dataset.embeddings[i] = emb
 
 
-def build_index(data_dir: str, rating_threshold: float = 4.0):
+def build_index(data_dir: str, rating_threshold: float = 4.0, force: bool = False):
     client = EmbeddingClient()
 
     conversations = Conversations.from_folder(
@@ -62,6 +62,8 @@ def build_index(data_dir: str, rating_threshold: float = 4.0):
     index_examples = []
     for key, conv in conversations.conversations.items():
         conv.apply_master_info(conversations.master)
+        if force:
+            conv.embeddings = {}
         add_embeddings(dataset=conv, client=client, rating_threshold=rating_threshold)
         conv.save()
         conv_embeddings, ave_embeddings = conv.fetch_dataset_embeddings()
@@ -216,12 +218,14 @@ def _evaluate_follow_ups(
 
 
 def rank_query(
-    index_path: str, dataset_folder: str, top_k: int = 5
+    index_path: str, dataset_folder: str, top_k: int = 5, force: bool = False
 ) -> Dict[str, Any]:
     client = EmbeddingClient()
 
     # --- Load new dataset and ensure embeddings exist ---
     dataset = Conversation.from_folder(dataset_folder)
+    if force:
+        dataset.embeddings = {}
     add_embeddings(dataset=dataset, client=client, rating_threshold=-1.0)
     dataset.save()
 

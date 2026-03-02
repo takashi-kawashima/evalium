@@ -9,12 +9,18 @@ load_dotenv("local.env")
 
 
 def build_index_cmd(args):
-    index_conv = build_index(args.data_dir, rating_threshold=args.threshold)
+    force = getattr(args, "force", False)
+    if force:
+        print("Force rebuild: clearing existing embeddings")
+    index_conv = build_index(args.data_dir, rating_threshold=args.threshold, force=force)
     print(f"Index built, dataset id: {index_conv.name}")
 
 
 def rank_cmd(args):
-    results = rank_query(args.index, args.dataset, top_k=args.top_k)
+    force = getattr(args, "force", False)
+    if force:
+        print("Force rebuild: clearing existing embeddings for dataset")
+    results = rank_query(args.index, args.dataset, top_k=args.top_k, force=force)
 
     print(f"\n=== Rank Results: {results['conversation_name']} ===\n")
 
@@ -44,11 +50,15 @@ def main():
     p_build = sub.add_parser("build-index")
     p_build.add_argument("--data-dir", required=True)
     p_build.add_argument("--threshold", type=float, default=4.0)
+    p_build.add_argument("--force", action="store_true", default=False,
+                         help="Force rebuild: clear existing embeddings and regenerate all")
 
     p_rank = sub.add_parser("rank")
     p_rank.add_argument("--index", required=True)
     p_rank.add_argument("--dataset", required=True)
     p_rank.add_argument("--top-k", type=int, default=5)
+    p_rank.add_argument("--force", action="store_true", default=False,
+                        help="Force rebuild: clear existing embeddings and regenerate all")
 
     args = parser.parse_args()
     if args.cmd == "build-index":

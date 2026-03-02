@@ -42,7 +42,7 @@ for dir in "$DATASET"/*/; do
     echo "=========================================="
     echo "Running rank: $dir"
     echo "=========================================="
-    uv run python -m evalium.cli rank --index "$INDEX" --dataset "$dir" --top-k "$TOP_K"
+    uv run python -m evalium.cli rank --index "$INDEX" --dataset "$dir" --top-k "$TOP_K"  --force
     echo ""
 done
 

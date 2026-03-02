@@ -14,7 +14,7 @@ class EmbeddingClient:
     """
 
     def __init__(self, model: Optional[str] = None):
-        self.model = model or os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+        self.model = model or os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
 
         rak_key = os.getenv("RAKUTEN_AI_GATEWAY_KEY")
         if not rak_key:
@@ -35,12 +35,20 @@ class EmbeddingClient:
         try:
             from openai import OpenAI
 
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = client.embeddings.create(input=texts, model=self.model)
+            return np.array([d.embedding for d in response.data])
+        except Exception:
+            pass
+
+        # Try 0: openai.OpenAI
+        try:
+            from openai import OpenAI
+
             client = OpenAI(
                 api_key=self._rakuten_key, base_url=self._rakuten_base_openai
             )
-            response = client.embeddings.create(
-                input=texts, model="text-embedding-3-small"
-            )
+            response = client.embeddings.create(input=texts, model=self.model)
             return np.array([d.embedding for d in response.data])
         except Exception:
             pass

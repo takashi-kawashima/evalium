@@ -13,6 +13,8 @@ from notebooks.utils.loader import (
     build_follow_up_df,
     build_stats_df,
     build_summary_df,
+    build_variance_df,
+    load_all_embeddings_variance,
     load_all_follow_up_results,
     load_all_results,
     load_all_stats,
@@ -297,6 +299,33 @@ def show_stats(
         df.style.set_caption(f"{label} Avg Token & Latency")
         .format(fmt)
         .set_properties(**{"text-align": "center"}, subset=present)
+    )
+    display(styler)
+
+
+def show_variance(
+    data_dir: str,
+    label: str = "Dataset",
+) -> None:
+    """Display per-conversation total variance of embedding vectors.
+
+    Total variance = mean squared Euclidean distance from centroid.
+    The OVERALL row shows the mean of per-conversation variances.
+    """
+    variances = load_all_embeddings_variance(data_dir)
+    if not variances:
+        display(Markdown("**Variance not available.** No embeddings.csv files found."))
+        return
+
+    display(Markdown(f"## {label} — Embedding Vector Variance"))
+    display(Markdown(f"`{data_dir}` — {len(variances)} conversations"))
+
+    df = build_variance_df(variances)
+
+    styler = (
+        df.style.set_caption(f"{label} Total Variance (from centroid)")
+        .format({"total_variance": "{:.6f}"})
+        .set_properties(**{"text-align": "center"}, subset=["total_variance"])
     )
     display(styler)
 

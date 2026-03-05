@@ -201,6 +201,52 @@ def build_follow_up_df(
     return df
 
 
+def load_all_embeddings_variance(folder: str) -> list[dict[str, Any]]:
+    """Compute total variance (mean squared distance from centroid) per conversation.
+
+    Reads ``embeddings.csv`` from each immediate sub-folder of *folder*.
+    Returns one dict per conversation with keys
+    ``conversation_name`` and ``total_variance``.
+    """
+    root = Path(folder)
+    if not root.is_dir():
+        return []
+
+    results: list[dict[str, Any]] = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        csv_path = child / "embeddings.csv"
+        if not csv_path.is_file():
+            continue
+        df = pd.read_csv(csv_path, index_col=0)
+        if df.empty:
+            continue
+        vectors = df.values.astype(float)
+        centroid = vectors.mean(axis=0)
+        total_var = float(np.mean(np.sum((vectors - centroid) ** 2, axis=1)))
+        results.append({
+            "conversation_name": child.name,
+            "total_variance": round(total_var, 6),
+        })
+    return results
+
+
+def build_variance_df(variances: list[dict[str, Any]]) -> pd.DataFrame:
+    """Build a per-conversation variance DataFrame with an OVERALL (mean) row."""
+    df = pd.DataFrame(variances)
+    if df.empty:
+        return df
+
+    mean_var = float(df["total_variance"].dropna().mean())
+    overall = {
+        "conversation_name": "OVERALL",
+        "total_variance": round(mean_var, 6),
+    }
+    df = pd.concat([df, pd.DataFrame([overall])], ignore_index=True)
+    return df
+
+
 _STATS_NUM_COLS = [
     "avg_time_seconds", "avg_total_tokens",
     "avg_prompt_tokens", "avg_completion_tokens",

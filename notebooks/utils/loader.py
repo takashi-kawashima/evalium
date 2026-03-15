@@ -64,6 +64,19 @@ def load_all_stats(folder: str) -> list[dict[str, Any]]:
                 row[f"avg_{col}"] = round(float(df[col].dropna().mean()), 2)
             else:
                 row[f"avg_{col}"] = np.nan
+
+        has_token_cols = all(
+            c in df.columns for c in ["total_tokens", "prompt_tokens", "completion_tokens"]
+        )
+        if has_token_cols:
+            thinking = df["total_tokens"] - df["prompt_tokens"] - df["completion_tokens"]
+            output = df["total_tokens"] - df["prompt_tokens"]
+            row["avg_thinking_tokens"] = round(float(thinking.dropna().mean()), 2)
+            row["avg_output_tokens"] = round(float(output.dropna().mean()), 2)
+        else:
+            row["avg_thinking_tokens"] = np.nan
+            row["avg_output_tokens"] = np.nan
+
         stats.append(row)
     return stats
 
@@ -250,6 +263,7 @@ def build_variance_df(variances: list[dict[str, Any]]) -> pd.DataFrame:
 _STATS_NUM_COLS = [
     "avg_time_seconds", "avg_total_tokens",
     "avg_prompt_tokens", "avg_completion_tokens",
+    "avg_thinking_tokens", "avg_output_tokens",
 ]
 
 

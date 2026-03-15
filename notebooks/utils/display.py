@@ -56,6 +56,8 @@ _STATS_NUM_COLS = [
     "avg_total_tokens",
     "avg_prompt_tokens",
     "avg_completion_tokens",
+    "avg_thinking_tokens",
+    "avg_output_tokens",
 ]
 
 
